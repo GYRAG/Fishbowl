@@ -1,9 +1,9 @@
-# Stockfish Lens
+# Fishbowl
 
 A live picture of how Stockfish 19 picks a move: the position goes in on the left, runs through
 the engine's neural network (NNUE), and the search fans out on the right.
 
-Everything runs in the browser, so the site is plain static files.
+Live at https://fishbowl-omega.vercel.app. Everything runs in the browser, so the site is plain static files.
 
 ```bash
 npm install
