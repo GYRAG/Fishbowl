@@ -38,3 +38,7 @@ first start.
 
 - `engine/` (not committed) — the official Stockfish 19 Windows release (binary + matching source), the network file exported from it, and a cached 2-D layout of the neurons.
 - `viz/server.js` — runs the engine and streams it to the browser. `viz/index.html` — the picture.
+
+## License
+
+GPL-3.0, the same as Stockfish: `viz/nnue.js` is ported from Stockfish's source. See `LICENSE`.
