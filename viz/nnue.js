@@ -1,29 +1,57 @@
-// Stockfish 19 NNUE forward pass in plain JS, ported from engine/stockfish/src/nnue.
-// The engine only prints the final number; this recomputes it from the same weights
-// so every neuron along the way can be shown. `node nnue.js` checks it against the engine.
+// Stockfish 19 NNUE forward pass in plain JS, ported from Stockfish's src/nnue.
+// The engine only prints the final number; this recomputes it from the same weights so every
+// neuron along the way can be shown. Runs in the browser (net-worker.js) and in Node, where
+// `npm run check` compares it with the engine's own evaluation.
+(function () {
 'use strict';
-const fs = require('fs');
-const path = require('path');
-const { spawn, execFileSync } = require('child_process');
-
-const ENGINE_DIR = path.join(__dirname, '..', 'engine');
-const EXE = path.join(ENGINE_DIR, 'stockfish', 'stockfish-windows-x86-64-universal.exe');
-const NET_NAME = 'nn-1a298aa575a0.nnue';
-const NET_PATH = path.join(ENGINE_DIR, NET_NAME);
+const NET_NAME = 'nn-1a298aa575a0.nnue';      // the network compiled into the Stockfish 19 build we load
 
 const L1 = 1024, HALF = 512, L2 = 32, L3 = 32, STACKS = 8;
 const PSQ_DIMS = 22528, THREAT_DIMS = 59808, PAIR_DIMS = 4560;
 
 // ---------- net file ----------
-function loadNet() {
-  if (!fs.existsSync(NET_PATH)) // the release exe embeds the net; ask it to write it out
-    execFileSync(EXE, { cwd: ENGINE_DIR, input: `export_net ${NET_NAME}\nquit\n` });
-  const buf = fs.readFileSync(NET_PATH);
+// The browser engine carries the network inside its .wasm, so instead of downloading it a second
+// time it is rebuilt from the wasm's data segments. The compiler leaves runs of zero bytes out of
+// those segments (memory starts zeroed), so they are laid back out at their addresses.
+function netFromWasm(w) {
+  let p = 8;
+  const leb = () => { let r = 0, s = 0, b; do { b = w[p++]; r += (b & 0x7f) * 2 ** s; s += 7; } while (b & 0x80); return r; };
+  const segs = [];
+  while (p < w.length) {
+    const id = w[p++], end = leb() + p;
+    if (id === 11) for (let n = leb(); n--;) {     // data section
+      const flags = leb();
+      if (flags === 1) { p += leb(); continue; }    // passive segment: not placed in memory
+      if (flags === 2) leb();                       // memory index
+      if (w[p++] !== 0x41) throw new Error('data segment offset is not a constant');
+      const off = leb();
+      if (w[p++] !== 0x0b) throw new Error('data segment offset is not closed');
+      const len = leb(); segs.push([off, p, len]); p += len;
+    }
+    p = end;
+  }
+  let start = -1;                                   // the net begins with its version, 0x6A448AFA
+  for (const [off, at, len] of segs) {
+    for (let i = 0; i + 4 <= len && start < 0; i++)
+      if (w[at + i] === 0xfa && w[at + i + 1] === 0x8a && w[at + i + 2] === 0x44 && w[at + i + 3] === 0x6a) start = off + i;
+    if (start >= 0) break;
+  }
+  if (start < 0) throw new Error('no network found in the engine');
+  const mem = new Uint8Array(Math.max(...segs.map(([off, , len]) => off + len)) - start);
+  for (const [off, at, len] of segs) if (off + len > start) {
+    const from = Math.max(off, start);
+    mem.set(w.subarray(at + from - off, at + len), from - start);
+  }
+  return mem;                                       // the net, then whatever data followed it
+}
+
+function parseNet(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let p = 0;
-  const u32 = () => (p += 4, buf.readUInt32LE(p - 4));
+  const u32 = () => (p += 4, dv.getUint32(p - 4, true));
   const leb = (n, Arr) => {
-    if (buf.toString('latin1', p, p + 17) !== 'COMPRESSED_LEB128') throw new Error('LEB128 magic missing at ' + p);
-    const end = p + 21 + buf.readUInt32LE(p + 17);
+    if (String.fromCharCode(...buf.subarray(p, p + 17)) !== 'COMPRESSED_LEB128') throw new Error('LEB128 magic missing at ' + p);
+    const end = p + 21 + dv.getUint32(p + 17, true);
     p += 21;
     const out = new Arr(n);
     for (let i = 0; i < n; i++) {
@@ -35,7 +63,7 @@ function loadNet() {
     return out;
   };
   const i8 = n => (p += n, new Int8Array(buf.buffer, buf.byteOffset + p - n, n));
-  const i32 = n => { const a = new Int32Array(n); for (let i = 0; i < n; i++) a[i] = buf.readInt32LE(p + 4 * i); p += 4 * n; return a; };
+  const i32 = n => { const a = new Int32Array(n); for (let i = 0; i < n; i++) a[i] = dv.getInt32(p + 4 * i, true); p += 4 * n; return a; };
 
   if (u32() !== 0x6A448AFA) throw new Error('unexpected net version');
   u32(); const desc = u32(); p += desc; // net hash, description
@@ -49,7 +77,7 @@ function loadNet() {
     u32();
     net.stacks.push({ b0: i32(L2), w0: i8(L2 * L1), b1: i32(L3), w1: i8(L3 * L2 * 2), b2: i32(1), w2: i8(L2 * 2 + L3 * 2) });
   }
-  if (p !== buf.length) throw new Error('net file has trailing bytes');
+  if (p > buf.length) throw new Error('network is cut short');
   return net;
 }
 
@@ -309,20 +337,23 @@ function layout(net) {
   return Array.from({ length: N }, (_, j) => [+(comps[0][j] * Math.sqrt(N)).toFixed(3), +(comps[1][j] * Math.sqrt(N)).toFixed(3)]);
 }
 
-module.exports = { EXE, ENGINE_DIR, NET_NAME, loadNet, parseFen, cleanFen, applyMove, moveLabel, forward, layout };
+const API = { NET_NAME, netFromWasm, parseNet, parseFen, cleanFen, applyMove, moveLabel, forward, layout };
+if (typeof module === 'object' && module.exports) module.exports = API; else self.NNUE = API;
 
-// ---------- self-check: every position of a game must match the engine's own NNUE number ----------
-if (require.main === module) {
-  const assert = require('assert'); // move labels name the piece when two of a kind can reach the square
+// ---------- Node: `npm run check`, and `node viz/nnue.js layout` to rewrite viz/layout.json ----------
+// The check replays a game through the same WebAssembly engine the page runs and requires every
+// position's network value to match the engine's own `eval` exactly.
+if (typeof require === 'function' && require.main === module) {
+  const fs = require('fs'), path = require('path'), assert = require('assert');
+  const bin = path.join(path.dirname(require.resolve('stockfish')), 'bin');
+  const net = parseNet(netFromWasm(new Uint8Array(fs.readFileSync(path.join(bin, 'stockfish-19-single.wasm')))));
+  if (process.argv[2] === 'layout') return fs.writeFileSync(path.join(__dirname, 'layout.json'), JSON.stringify(layout(net)));
+  // move labels name the piece when two of a kind can reach the square
   assert.strictEqual(moveLabel(parseFen('4k3/8/8/8/8/5N2/8/1N2K3 w').board, 'b1d2'), 'Nbd2');
   assert.strictEqual(moveLabel(parseFen('4k3/8/8/R7/8/8/8/R3K3 w').board, 'a1a3'), 'R1a3');
   assert.strictEqual(moveLabel(parseFen('4k3/8/8/8/8/8/8/R3K3 w').board, 'a1a3'), 'Ra3');
   const GAME = 'e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6 c1e3 e7e5 d4b3 c8e6 f2f3 f8e7 d1d2 e8g8 e1c1 b8d7 g2g4 b7b5 g4g5 b5b4 c3e2 f6e8 f3f4 a6a5 f4f5 a5a4 b3d4 e5d4 e2d4 b4b3 c1b1 b3c2 d4c2 e6b3 a2b3 a4b3 c2a3 d7e5 h2h4 a8a4 d2g2 d8a8 f1b5 a4a3 b2a3 a8a3 b5e8 f8e8 e3d4 e5c4 d4b2 a3a2 b1c1 c4b2 g2b2 a2b2 c1b2 e7g5 h4g5 e8e4 d1d6 h7h6 g5h6 g7h6 d6d8 g8g7 f5f6 g7g6 h1g1 g6f5 g1g7 e4e2 b2b3 f5f6 g7h7 e2e6 d8d7 f6g6 h7f7 e6e3 b3c4 h6h5 f7f1 h5h4 d7d4 h4h3 f1h1 e3e2 h1h3 e2c2 c4d5 c2c8 h3g3 g6f5 d4f4'.split(' ');
   const FENS = ['4k3/P6p/8/3pP3/8/8/7P/4K2R w K d6 0 1', '4k3/P6p/8/8/8/8/6pP/4K3 b - - 0 1', '8/8/4k3/8/8/2K5/8/8 w - - 0 1'];
-  const net = loadNet();
-  const sf = spawn(EXE, { cwd: ENGINE_DIR });
-  let out = '';
-  sf.stdout.on('data', d => out += d);
   const cases = [];
   let board = parseFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w').board;
   GAME.forEach((m, i) => { cases.push({ board, stm: i & 1, cmd: `position startpos moves ${GAME.slice(0, i).join(' ')}` }); board = applyMove(board, m); });
@@ -332,9 +363,10 @@ if (require.main === module) {
     const mv = fen.includes('d6') ? 'e5d6' : fen.includes('2pP') ? 'g2g1q' : null; // en passant, promotion
     if (mv) cases.push({ board: applyMove(p.board, mv), stm: p.stm ^ 1, cmd: `position fen ${fen} moves ${mv}` });
   }
-  for (const c of cases) sf.stdin.write(`${c.cmd}\neval\n`);
-  sf.stdin.end('quit\n');
-  sf.on('close', () => {
+  let out = '';
+  const sf = require('stockfish')('single', line => {
+    out += line + '\n';
+    if (line !== 'readyok') return;                 // every eval has been printed
     const got = out.split('Final evaluation').slice(0, -1).map(s => { const m = s.match(/NNUE evaluation\s+([+-]?\d+) \(side to move/); return m ? +m[1] : null; });
     let checked = 0, bad = 0;
     cases.forEach((c, i) => {
@@ -346,4 +378,7 @@ if (require.main === module) {
     console.log(`${checked - bad}/${checked} positions match the engine exactly (${cases.length - checked} skipped: in check)`);
     process.exit(bad || !checked ? 1 : 0);
   });
+  for (const c of cases) { sf.processCommand(c.cmd); sf.processCommand('eval'); }
+  sf.processCommand('isready');
 }
+})();

@@ -3,23 +3,32 @@
 A live picture of how Stockfish 19 picks a move: the position goes in on the left, runs through
 the engine's neural network (NNUE), and the search fans out on the right.
 
+Everything runs in the browser, so the site is plain static files.
+
 ```bash
+npm install
 npm start
 ```
 
-Then open http://localhost:4517. No dependencies to install (Node standard library only).
+Then open http://localhost:4517.
 
-The engine is not in this repository (it is over GitHub's file size limit). Download the official
-Stockfish 19 Windows release (`stockfish-windows-x86-64-universal`) and unzip it so the program is at
-`engine/stockfish/stockfish-windows-x86-64-universal.exe`. The network file is exported from it on
-first start.
+The first visit downloads the engine, one 95 MB file that also holds the network. The browser keeps
+it, so later visits start in a few seconds. It needs a desktop-class browser: the engine and the
+network together use a few hundred MB of memory.
+
+## Publishing on Vercel
+
+Import the GitHub repository in Vercel. `vercel.json` already sets the build (`npm run build`, which
+copies the engine next to the page) and the output folder (`viz/`). There is no server code.
 
 ## What is real
 
-- **Search lines, scores, depth, speed** come straight from the Stockfish 19 process over UCI.
-- **Every neuron** is recomputed in JavaScript from the same network file the engine uses
-  (`viz/nnue.js`, ported from `engine/stockfish/src/nnue`). `npm run check` replays a game and
-  compares the result with the engine's own `eval` number on every position.
+- **Search lines, scores, depth, speed** come from Stockfish 19 itself, compiled to WebAssembly
+  ([stockfish.js](https://github.com/nmrugg/stockfish.js)) and running in a background thread of the page.
+  It is the single-threaded build, so it searches more slowly than the desktop program.
+- **Every neuron** is recomputed in JavaScript (`viz/nnue.js`, ported from Stockfish's `src/nnue`) from
+  the network inside that same engine file. `npm run check` replays a game through the engine and
+  requires its own `eval` number to match on every position.
 - **Fibres** show only the strongest connections, not all of them. The shape of the two clouds is a
   2-D map (PCA) of the neurons' incoming weights, so neighbours listen to similar inputs.
 
@@ -36,8 +45,11 @@ first start.
 
 ## Layout
 
-- `engine/` (not committed) — the official Stockfish 19 Windows release (binary + matching source), the network file exported from it, and a cached 2-D layout of the neurons.
-- `viz/server.js` — runs the engine and streams it to the browser. `viz/index.html` — the picture.
+- `viz/` is the whole site. `index.html` draws the picture. `game.js` runs the game and talks to the
+  engine. `net-worker.js` runs the network off the page's thread. `layout.json` holds the neuron map
+  (rewrite it with `node viz/nnue.js layout`).
+- `build.js` copies the engine from `node_modules/stockfish` into `viz/engine/`. `serve.js` serves
+  `viz/` on this computer.
 
 ## License
 

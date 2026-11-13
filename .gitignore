@@ -1,5 +1,8 @@
-# the Stockfish release (103 MB exe, 98 MB net) is too big for GitHub; see README
+# copied from node_modules/stockfish by `npm run build`
+viz/engine/
+# the native Stockfish release this started from; the app no longer uses it
 engine/
 # upstream Stockfish clone, not used by the app
 Stockfish/
 node_modules/
+.vercel/

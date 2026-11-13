@@ -3,7 +3,11 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "start": "node viz/server.js",
+    "start": "node build.js && node serve.js",
+    "build": "node build.js",
     "check": "node viz/nnue.js"
+  },
+  "dependencies": {
+    "stockfish": "19.0.1"
   }
 }

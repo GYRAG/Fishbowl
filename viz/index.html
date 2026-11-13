@@ -51,7 +51,7 @@
 <canvas id="c" aria-label="Live picture of Stockfish reading a chess position through its neural network and searching for a move"></canvas>
 <header id="head">
   <h1>How Stockfish decides</h1>
-  <p id="net">connecting to the engine…</p>
+  <p id="net"></p>
 </header>
 <nav id="styles" aria-label="How the network is drawn">
   <button data-style="nebula">Nebula<kbd>1</kbd></button>
@@ -84,6 +84,8 @@
   <p class="foot">Ivory is White and ember is Black, everywhere. Keys 1 to 4 redraw the network four ways; the numbers stay the same.</p>
   <div class="gnav"><button id="gBack">← back</button><button id="gNext">next<kbd>→</kbd></button><button id="gClose">close<kbd>esc</kbd></button></div>
 </section>
+<script src="nnue.js"></script>
+<script src="game.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -112,7 +114,7 @@ const store = (k, v) => { try { return v === undefined ? localStorage.getItem(k)
 let W = 0, H = 0, U = 1, G = null, BG = '#08080a';
 let shape = null, strand = null, cellOf = null;   // three arrangements of the same 512 neurons
 let style = STYLES.includes(store('lens-style')) ? store('lens-style') : 'nebula', morphEnd = 0;
-let pos = null, view = null, auto = true, pace = 3000;
+let pos = null, view = null, auto = true, pace = 3000, loading = 'Loading Stockfish 19…';
 let L = {}, depths = [], lastInfo = 0;        // search lines by rank, finished iterations
 let fibres = [], ghost = null, prevView = null, viewT0 = 0, prevL = {}, prevT0 = 0, pulses = [], fanPulses = [], stageT0 = 0, stageK = 1;
 let slide = null, sel = -1, tip = '', pin = null, previewKey = '', previewTimer = 0, pauseTimer = 0, last = performance.now();
@@ -345,8 +347,8 @@ function showTour(n) {
   tour = n; lastChange = performance.now();
   document.body.classList.toggle('touring', n >= 0);
   $('guide').hidden = n < 0; $('bGuide').setAttribute('aria-expanded', n >= 0); $('bGuide').classList.toggle('on', n >= 0);
-  if (n < 0) { store('lens-toured', 1); if (tourResume) post('/auto', { on: true }); tourResume = false; return; }
-  if (auto && !tourResume) { tourResume = true; post('/auto', { on: false }); } // hold the position still while it is explained
+  if (n < 0) { store('lens-toured', 1); if (tourResume) post('auto', { on: true }); tourResume = false; return; }
+  if (auto && !tourResume) { tourResume = true; post('auto', { on: false }); } // hold the position still while it is explained
   $('guide').querySelectorAll('li').forEach((li, i) => li.classList.toggle('on', i === n));
   $('gStep').textContent = `0${n + 1} / 05`;
   $('gBack').hidden = !n; $('guide').querySelector('.foot').hidden = !!n;
@@ -488,8 +490,11 @@ function drawNetwork(now, t, dt, thinking) {
 
 function drawFan(now, dt) {
   const ks = Object.keys(L).map(Number).sort((a, b) => scoreOf(L[b].d) - scoreOf(L[a].d)); // up = better for white
-  const gaps = ks.slice(1).map((k, i) => clamp((scoreOf(L[ks[i]].d) - scoreOf(L[k].d)) * .6, 40, 84) * U); // 40: room for a label between lines
-  let y = G.cy - gaps.reduce((a, b) => a + b, 0) / 2;
+  let gaps = ks.slice(1).map((k, i) => clamp((scoreOf(L[ks[i]].d) - scoreOf(L[k].d)) * .6, 40, 84) * U); // 40: room for a label between lines
+  // centred on the output, but kept below the chosen move and its numbers, and above the depth strip
+  const lo = G.top + 112 * U, hi = H - 110 * U, spread = gaps.reduce((a, b) => a + b, 0), fit = Math.min(spread, hi - lo);
+  if (spread > fit) gaps = gaps.map(g => g * fit / spread);
+  let y = clamp(G.cy - fit / 2, lo, hi - fit);
   const ease = 1 - Math.exp(-dt * 7), x0 = G.out.x, xs = Math.max(G.fanFrom, x0), mid = lerp(xs, G.fx1, .5);
   const hotK = pin ? pin.k : hover.line, hotPly = pin ? pin.ply : hover.ply;
   const stroke = (l, a, w) => {
@@ -564,7 +569,9 @@ function drawText() {
   const cell = 124 * U, n = Math.max(1, Math.floor((G.fx2 - W * .29) / cell)), shown = depths.slice(-n), sx = G.fx2 - n * cell + 16 * U;
   if (shown.length) {
     label('SEARCH DEPTH', sx, H - 66 * U, { a: .6 });
-    label('each pass looks one step further ahead · underlined where it changed its mind', sx + ctx.measureText('SEARCH DEPTH').width + 16 * U, H - 66 * U, { a: .5, track: .3 });
+    const cx = sx + ctx.measureText('SEARCH DEPTH').width + 16 * U, note = 'each pass looks one step further ahead · underlined where it changed its mind';
+    ctx.letterSpacing = .3 * U + 'px';
+    if (cx + ctx.measureText(note).width < W - 12) label(note, cx, H - 66 * U, { a: .5, track: .3 }); // only when it fits
   }
   shown.forEach((d, i) => {
     const x = G.fx2 - (shown.length - i) * cell + 16 * U, fresh = i === shown.length - 1, a = fresh ? .95 : .2 + .35 * i / shown.length;
@@ -591,8 +598,8 @@ function frame(now) {
   if (ready && now - Math.max(lastInfo, lastChange) > 3000) return;
   ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
-  if (!ready) return;
-  spin += ((thinking ? 1 : 0) - spin) * (1 - Math.exp(-dt * 3)); clock += dt * spin; // the dust drifts only while the engine works
+  if (!ready) { if (loading && G) label(loading, W / 2, H / 2, { align: 'center', font: SERIF, size: 25, track: 0, a: .8 }); return; }
+  spin +=((thinking ? 1 : 0) - spin) * (1 - Math.exp(-dt * 3)); clock += dt * spin; // the dust drifts only while the engine works
   const since = now - stageT0, k = 1 - Math.exp(-dt * 9);
   if (morphEnd) {                 // a style change: every neuron flies to its new place
     if (now >= morphEnd) settle();
@@ -664,7 +671,7 @@ function syncPreview() {
   const looking = pin || hover.line !== null;
   if (!looking) { clearTimeout(pauseTimer); pauseTimer = 0; }
   else if (auto && !pauseTimer) // resting on a line pauses the self-play, so the future does not vanish under the pointer
-    pauseTimer = setTimeout(() => { pauseTimer = 0; if (auto && (pin || hover.line !== null)) post('/auto', { on: false }); }, 350);
+    pauseTimer = setTimeout(() => { pauseTimer = 0; if (auto && (pin || hover.line !== null)) post('auto', { on: false }); }, 350);
   const l = hover.line !== null && L[hover.line], moves = pin ? pin.moves : l ? l.d.pv.slice(0, hover.ply + 1) : [], want = moves.join(',');
   if (want === previewKey) return;
   previewKey = want;
@@ -673,9 +680,8 @@ function syncPreview() {
   const key = pos.id + ':' + want, show = v => previewKey === want && setView({ ...v, ahead: moves.length, moves }, true);
   if (cache.has(key)) return show(cache.get(key));
   previewTimer = setTimeout(async () => {
-    const r = await fetch('/trace?moves=' + want).catch(() => null);
-    if (!r || !r.ok) return;
-    const v = await r.json();
+    const v = await Game.preview(moves).catch(() => null);
+    if (!v) return;
     cache.set(key, v); show(v);
   }, 50);
 }
@@ -697,20 +703,17 @@ cv.addEventListener('click', e => {
   if (s < 0) { sel = -1; return; }
   if (sel >= 0) {
     const m = sqName(sel) + sqName(s), go = pos.legal.find(x => x === m) || pos.legal.find(x => x === m + 'q');
-    if (go) { sel = -1; return post('/move', { uci: go }); }
+    if (go) { sel = -1; return post('move', { uci: go }); }
   }
   sel = pos.legal.some(m => sqOf(m) === s) ? s : -1;
 });
 
 // ---------- controls ----------
 const say = m => { $('msg').textContent = m; };
-async function post(path, body = {}) {
-  try {
-    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const j = await r.json();
-    say(j.error ? j.error[0].toUpperCase() + j.error.slice(1) + '.' : '');
-    return !j.error;
-  } catch { say('The engine is not answering. Run “npm start” in the project folder.'); return false; }
+async function post(name, body = {}) {   // a game action; says why if it was refused
+  const err = await Game.act(name, body);
+  say(err ? err[0].toUpperCase() + err.slice(1) + '.' : '');
+  return !err;
 }
 function setMode(m) {
   auto = m.auto;
@@ -720,16 +723,16 @@ function setMode(m) {
 }
 function pickStyle(name) { if (name !== style && !morphEnd) { store('lens-style', name); applyStyle(name, true); } }
 
-$('bAuto').onclick = () => { unpin(); tourResume = false; post('/auto', { on: !auto }); };
-$('bStep').onclick = () => post('/step');
-$('bUndo').onclick = () => post('/undo');
-$('bNew').onclick = () => post('/new');
+$('bAuto').onclick = () => { unpin(); tourResume = false; post('auto', { on: !auto }); };
+$('bStep').onclick = () => post('step');
+$('bUndo').onclick = () => post('undo');
+$('bNew').onclick = () => post('new');
 $('bBack').onclick = unpin;
-$('bPace').onclick = () => post('/pace', { ms: PACES[(PACES.indexOf(pace) + 1) % PACES.length] });
+$('bPace').onclick = () => post('pace', { ms: PACES[(PACES.indexOf(pace) + 1) % PACES.length] });
 $('bFen').onclick = () => { const f = $('fen'); f.hidden = !f.hidden; if (!f.hidden) f.focus(); };
 $('fen').onkeydown = async e => {
   if (e.key === 'Escape') e.target.hidden = true;
-  if (e.key === 'Enter' && e.target.value.trim() && await post('/new', { fen: e.target.value })) { e.target.value = ''; e.target.hidden = true; }
+  if (e.key === 'Enter' && e.target.value.trim() && await post('new', { fen: e.target.value })) { e.target.value = ''; e.target.hidden = true; }
 };
 $('bGuide').onclick = () => showTour(tour < 0 ? 0 : -1);
 $('gBack').onclick = () => showTour(Math.max(0, tour - 1));
@@ -750,15 +753,13 @@ addEventListener('keydown', e => {
 // A button clicked with the mouse gives focus back, so space goes on meaning pause; keyboard users keep their focus.
 addEventListener('click', e => { const b = e.detail && e.target.closest('button'); if (b) b.blur(); });
 
-// ---------- engine feed ----------
-const es = new EventSource('/events');
-es.addEventListener('init', e => {
-  const d = JSON.parse(e.data);
-  makeShape(d.layout); resize();
-  $('net').textContent = `Stockfish 19 · ${d.net} · 86,896 → 1,024 → 32 → 32 → 1`;
-});
-es.addEventListener('pos', e => {
-  pos = JSON.parse(e.data);
+// ---------- engine feed (game.js) ----------
+$('net').textContent = `Stockfish 19 · ${Game.NET} · 86,896 → 1,024 → 32 → 32 → 1`;
+Game.layout.then(l => { makeShape(l); resize(); });
+Game.on.status = s => { loading = s; };
+Game.on.mode = setMode;
+Game.on.pos = d => {
+  pos = d; loading = '';
   prevL = L; prevT0 = performance.now();            // the new search's lines take over these, so the fan glides instead of collapsing
   L = {}; depths = []; fanPulses = []; sel = -1; pin = null; previewKey = ''; hover.line = null; cache.clear();
   slide = pos.last ? { from: sqOf(pos.last), to: sqOf(pos.last.slice(2)), t0: performance.now() } : null;
@@ -766,9 +767,8 @@ es.addEventListener('pos', e => {
   setView(rootView());
   refreshHint();
   if (firstRun) { firstRun = false; showTour(0); } // first visit: start with the tour
-});
-es.addEventListener('info', e => {
-  const d = JSON.parse(e.data);
+};
+Game.on.info = d => {
   if (!pos || !G || d.id !== pos.id) return;
   lastInfo = performance.now();
   for (const k in L) if (+k !== d.multipv && L[k].d.pv[0] === d.pv[0]) delete L[k]; // the move moved rank: its old line is stale
@@ -784,10 +784,7 @@ es.addEventListener('info', e => {
     const want = pin.moves.join(','), k = Object.keys(L).find(k => L[k].d.pv.slice(0, pin.moves.length).join(',') === want);
     pin.k = k === undefined ? null : +k;
   } else if (hover.line !== null) { pick(); syncPreview(); }
-});
-es.addEventListener('mode', e => setMode(JSON.parse(e.data)));
-es.onerror = () => say('Lost the engine. Run “npm start” in the project folder.');
-es.onopen = () => say('');
+};
 
 addEventListener('resize', resize);
 document.addEventListener('visibilitychange', () => lastChange = performance.now()); // anything that arrived while hidden gets drawn
