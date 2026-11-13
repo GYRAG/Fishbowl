@@ -1,0 +1,9 @@
+{
+  "name": "stockfish-lens",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node viz/server.js",
+    "check": "node viz/nnue.js"
+  }
+}

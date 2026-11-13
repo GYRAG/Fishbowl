@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stockfish Lens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: 236,230,218; --ember: 214,138,82; --u: 1; }
+  html, body { margin: 0; height: 100%; background: #08080a; color: rgb(var(--ink)); overflow: hidden;
+    font: calc(10.5px * var(--u))/1.5 'IBM Plex Mono', Consolas, monospace; letter-spacing: .07em; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  header { position: fixed; pointer-events: none; }
+  h1 { margin: 0; font: 400 calc(27px * var(--u))/1 'Instrument Serif', Georgia, serif; letter-spacing: 0; }
+  header p { margin: calc(7px * var(--u)) 0 0; color: rgba(var(--ink), .6); }
+  nav { position: fixed; display: flex; flex-wrap: wrap; align-items: center; gap: calc(3px * var(--u)) calc(18px * var(--u)); }
+  #styles { right: 3.5vw; justify-content: flex-end; }
+  button { all: unset; cursor: pointer; text-transform: uppercase; color: rgba(var(--ink), .62); padding: calc(4px * var(--u)) 0;
+    border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; white-space: nowrap; }
+  button:hover { color: rgb(var(--ink)); }
+  button.on { color: rgb(var(--ink)); border-bottom-color: rgba(var(--ink), .55); }
+  button.main { color: rgb(var(--ink)); }
+  button[hidden] { display: none; }
+  button:focus-visible, input:focus-visible { outline: 1px solid rgba(var(--ink), .6); outline-offset: 3px; }
+  kbd { font: inherit; text-transform: none; color: rgba(var(--ink), .42); margin-left: .35em; }
+  #bGuide { margin-left: calc(14px * var(--u)); }
+  input { all: unset; flex-basis: 100%; box-sizing: border-box; padding: calc(5px * var(--u)) 0; color: rgb(var(--ink));
+    border-bottom: 1px solid rgba(var(--ink), .3); font: inherit; letter-spacing: .02em; }
+  input[hidden] { display: none; }
+  #msg { flex-basis: 100%; margin: 0; color: rgb(var(--ember)); }
+  #msg:empty { display: none; }
+  #hint { flex-basis: 100%; margin: calc(6px * var(--u)) 0 0; color: rgba(var(--ink), .58); text-transform: none; letter-spacing: .03em; }
+  /* the guide is a card that sits beside the part of the picture it explains; the rest is dimmed */
+  #guide { position: fixed; z-index: 2; box-sizing: border-box; width: min(calc(300px * var(--u)), calc(100vw - 32px));
+    padding: calc(18px * var(--u)) calc(20px * var(--u)) calc(12px * var(--u)); background: rgba(10,10,12,.96); box-shadow: 0 0 0 1px rgba(var(--ink), .1); }
+  #guide[hidden] { display: none; }
+  #guide ol { list-style: none; margin: 0; padding: 0; }
+  #guide li:not(.on) { display: none; }
+  #gStep { color: rgba(var(--ink), .5); }
+  #guide h2 { margin: calc(8px * var(--u)) 0 calc(10px * var(--u)); font: 400 calc(25px * var(--u))/1.1 'Instrument Serif', Georgia, serif; letter-spacing: 0; }
+  #guide p { margin: 0; color: rgba(var(--ink), .75); letter-spacing: .02em; line-height: 1.75; font-size: calc(11.5px * var(--u)); }
+  #guide .foot { margin-top: calc(12px * var(--u)); color: rgba(var(--ink), .55); font-size: inherit; }
+  #guide .gnav { display: flex; gap: calc(18px * var(--u)); margin-top: calc(14px * var(--u)); }
+  body > header, body > nav { transition: opacity .3s; }
+  body.touring > header, body.touring > nav { opacity: .25; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Live picture of Stockfish reading a chess position through its neural network and searching for a move"></canvas>
+<header id="head">
+  <h1>How Stockfish decides</h1>
+  <p id="net">connecting to the engine…</p>
+</header>
+<nav id="styles" aria-label="How the network is drawn">
+  <button data-style="nebula">Nebula<kbd>1</kbd></button>
+  <button data-style="orbit">Orbit<kbd>2</kbd></button>
+  <button data-style="loom">Loom<kbd>3</kbd></button>
+  <button data-style="grid">Grid<kbd>4</kbd></button>
+  <button id="bGuide" aria-expanded="false">How to read this<kbd>?</kbd></button>
+</nav>
+<nav id="ctl" aria-label="Game controls">
+  <button id="bBack" class="main" hidden>↩ back to now<kbd>esc</kbd></button>
+  <button id="bAuto" class="main"><span></span><kbd>space</kbd></button>
+  <button id="bStep">engine move<kbd>→</kbd></button>
+  <button id="bUndo">take back<kbd>←</kbd></button>
+  <button id="bNew">new game</button>
+  <button id="bFen">set position</button>
+  <button id="bPace" title="How long the engine thinks on each move while it plays itself">pace 3s</button>
+  <input id="fen" hidden aria-label="Position in FEN notation" placeholder="paste a FEN and press Enter" spellcheck="false">
+  <p id="msg" role="status"></p>
+  <p id="hint"></p>
+</nav>
+<section id="guide" hidden aria-label="How to read this picture" aria-live="polite">
+  <span id="gStep"></span>
+  <ol>
+    <li><h2>The position</h2><p>Stockfish is never shown a picture of the board. It gets a list of facts, out of 86,896 possible ones: which piece stands where, who attacks whom, which pawns stand side by side. The thin lines on the board are those facts. Hover a piece to see which neurons it drives.</p></li>
+    <li><h2>Two points of view</h2><p>Every fact nudges 1,024 neurons. This is done twice, once measured from each king, and the neurons are multiplied together in pairs, leaving 512 for each side: Black's view above, White's below. The bright ones are firing.</p></li>
+    <li><h2>Layers</h2><p>Whatever fires is mixed down through two layers of 32 neurons. The engine keeps eight copies of these layers and picks one by how many pieces are left on the board. Only the strongest connections are drawn.</p></li>
+    <li><h2>Instinct</h2><p>One number comes out: who stands better, in pawns, judged in a single look with no thinking ahead. Material also takes a shortcut straight to this number.</p></li>
+    <li><h2>Calculation</h2><p>Instinct alone would blunder. So the engine tries moves, answers them, and reads every resulting position with the same network, millions of times a second. Each line is a future it is weighing; higher is better for White. The brightest is its choice, also drawn as an arrow on the board. Along the bottom, each pass looks one step deeper. Hover a line to step into that future.</p></li>
+  </ol>
+  <p class="foot">Ivory is White and ember is Black, everywhere. Keys 1 to 4 redraw the network four ways; the numbers stay the same.</p>
+  <div class="gnav"><button id="gBack">← back</button><button id="gNext">next<kbd>→</kbd></button><button id="gClose">close<kbd>esc</kbd></button></div>
+</section>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const IVORY = '236,230,218', EMBER = '214,138,82';
+const MONO = "'IBM Plex Mono', Consolas, monospace", SERIF = "'Instrument Serif', Georgia, serif";
+const SYMBOLS = "'Segoe UI Symbol', 'Noto Sans Symbols 2', 'Apple Symbols', 'DejaVu Sans', sans-serif";
+const GLYPH = ' ♟♞♝♜♛♚', NAME = ['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+const STYLES = ['nebula', 'orbit', 'loom', 'grid'], PACES = [1500, 3000, 6000, 12000];
+const D = 7;                                  // dust motes per neuron
+const DELAY = [0, 300, 560, 760], DRAW = 420; // the four hops of the forward pass, in ms
+const MORPH = 750;                            // neurons flying from one style's arrangement to the next, in ms
+const CALM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v, lerp = (a, b, t) => a + (b - a) * t;
+const rad = d => d * Math.PI / 180;
+const sqName = s => 'abcdefgh'[s & 7] + ((s >> 3) + 1);
+const sqOf = m => (m.charCodeAt(0) - 97) + (m.charCodeAt(1) - 49) * 8;
+const pawns = cp => (cp < 0 ? '−' : '+') + (Math.abs(cp) / 100).toFixed(2);
+const big = n => n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : '' + n;
+const scoreOf = d => d.mate !== undefined ? Math.sign(d.mate) * (1e5 - Math.abs(d.mate) * 100) : d.cp;
+const scoreText = d => d.mate !== undefined ? '#' + (d.mate < 0 ? '−' : '') + Math.abs(d.mate) : pawns(d.cp);
+const store = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch { return null; } };
+
+// ---------- state ----------
+let W = 0, H = 0, U = 1, G = null, BG = '#08080a';
+let shape = null, strand = null, cellOf = null;   // three arrangements of the same 512 neurons
+let style = STYLES.includes(store('lens-style')) ? store('lens-style') : 'nebula', morphEnd = 0;
+let pos = null, view = null, auto = true, pace = 3000;
+let L = {}, depths = [], lastInfo = 0;        // search lines by rank, finished iterations
+let fibres = [], ghost = null, prevView = null, viewT0 = 0, prevL = {}, prevT0 = 0, pulses = [], fanPulses = [], stageT0 = 0, stageK = 1;
+let slide = null, sel = -1, tip = '', pin = null, previewKey = '', previewTimer = 0, pauseTimer = 0, last = performance.now();
+const hover = { x: -9, y: -9, key: null, line: null, ply: 0 };
+const cache = new Map();
+let tour = -1, tourResume = false, firstRun = !store('lens-toured'); // guided tour step, -1 when closed
+let lastChange = 0, clock = 0, spin = 1;      // drawing pauses once nothing has changed for a while
+const px =new Float32Array(1024), py = new Float32Array(1024), pxT = new Float32Array(1024), pyT = new Float32Array(1024);
+const nx = new Float32Array(64), ny = new Float32Array(64), nxT = new Float32Array(64), nyT = new Float32Array(64); // hidden neurons: layer*32 + k
+const act = new Float32Array(1024), tgt = new Float32Array(1024), hAct = new Float32Array(128), hTgt = new Float32Array(128);
+let outCp = 0;
+const dAng = new Float32Array(1024 * D), dRad = new Float32Array(1024 * D), dSpd = new Float32Array(1024 * D);
+for (let q = 0; q < dAng.length; q++) {
+  dAng[q] = Math.random() * 6.283;
+  dRad[q] = 2 + Math.pow(Math.random(), 1.6) * 17;
+  dSpd[q] = CALM ? 0 : (Math.random() - .5) * .5;
+}
+
+function sprite(c) {
+  const s = document.createElement('canvas'), g = s.getContext('2d');
+  s.width = s.height = 64;
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, `rgba(${c},1)`); gr.addColorStop(.18, `rgba(${c},.6)`); gr.addColorStop(.5, `rgba(${c},.12)`); gr.addColorStop(1, `rgba(${c},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  return s;
+}
+const SPR = { [IVORY]: sprite(IVORY), [EMBER]: sprite(EMBER) };
+for (const c in SPR) createImageBitmap(SPR[c]).then(b => SPR[c] = b); // bitmaps draw faster than canvases
+const glow = (x, y, r, c, a) => { ctx.globalAlpha = a; ctx.drawImage(SPR[c], x - r, y - r, 2 * r, 2 * r); };
+
+// ---------- geometry ----------
+// The server sends a 2-D map of the 512 pair-neurons (PCA of their incoming weights). Each style
+// arranges the same neurons differently, always keeping neighbours in that map close together.
+function makeShape(layout) {
+  const n = layout.length;
+  shape = new Array(n); strand = new Array(n); cellOf = new Array(n);
+  layout.map((p, j) => [Math.hypot(p[0], p[1]), j]).sort((a, b) => a[0] - b[0]).forEach(([, j], rank) => {
+    const th = Math.atan2(layout[j][1], layout[j][0]), r = Math.pow(1 - (rank + .5) / n, .8); // strongest-wired in the core
+    shape[j] = [Math.cos(th) * r, Math.sin(th) * r];
+  });
+  layout.map((p, j) => [Math.atan2(p[1], p[0]), j]).sort((a, b) => a[0] - b[0]).forEach(([, j], i) => strand[j] = i);
+  layout.map((p, j) => [p[0], j]).sort((a, b) => a[0] - b[0]).forEach(([, j], i) => cellOf[j] = [i >> 4, 0]);  // 32 columns of 16
+  for (let c = 0; c < 32; c++)
+    layout.map((p, j) => [p[1], j]).filter(([, j]) => cellOf[j][0] === c).sort((a, b) => a[0] - b[0]).forEach(([, j], r) => cellOf[j][1] = r);
+}
+const sqXY = s => [G.b.x + ((s & 7) + .5) * G.b.c, G.b.y + (7.5 - (s >> 3)) * G.b.c];
+
+// Where one style puts everything between the board and the search. c = 0 is white's view, 1 is black's.
+function styleSpec(name) {
+  const { cy, cr, top } = G, sweep = (x0, y0, x1, y1, bow = 0) => { const dx = x1 - x0; return [x0 + dx * .45, y0 + bow, x1 - dx * .45, y1 + bow * .4]; };
+  const column = { // the hidden layers and the output as plain columns; three of the four styles share this
+    node: (layer, k) => [W * (layer ? .59 : .535), cy + cr * 1.85 * (k / 15.5 - 1)],
+    out: [W * .665, cy], fanFrom: W * .665, curve: sweep, layers: [[W * .535, top], [W * .59, top]],
+  };
+  if (name === 'orbit') {
+    const ox = W * .485, R = Math.min(W * .17, H * .35);
+    const polar = (deg, r) => [ox + Math.cos(rad(deg)) * r, cy + Math.sin(rad(deg)) * r];
+    return {
+      mode: 'dust',
+      neuron: (c, j) => polar((c ? -1 : 1) * (90 + shape[j][0] * 60), R * (.82 + shape[j][1] * .18)),
+      node: (layer, k) => polar((k < 16 ? -1 : 1) * (38 + (k % 16) * 104 / 15), R * (layer ? .34 : .5)),
+      out: [ox, cy], fanFrom: ox + R * 1.03,
+      curve: (x0, y0, x1, y1) => { // bend along the rings: leave and arrive radially
+        const a0 = Math.atan2(y0 - cy, x0 - ox), a1 = Math.atan2(y1 - cy, x1 - ox), r1 = Math.hypot(x1 - ox, y1 - cy), rm = (Math.hypot(x0 - ox, y0 - cy) + r1) / 2;
+        return r1 < 1 ? [ox + Math.cos(a0) * rm, cy + Math.sin(a0) * rm, x1, y1] : [ox + Math.cos(a0) * rm, cy + Math.sin(a0) * rm, ox + Math.cos(a1) * rm, cy + Math.sin(a1) * rm];
+      },
+      mat: [polar(90, R * .64), polar(-90, R * .64)],
+      lab: { black: [ox, cy - R - 34 * U], white: [ox, cy + R + 26 * U], layers: null },
+      deco: () => {
+        ctx.strokeStyle = `rgb(${IVORY})`; ctx.globalAlpha = .07; ctx.lineWidth = 1;
+        for (const r of [.5, .34]) for (const s of [1, -1]) { ctx.beginPath(); ctx.arc(ox, cy, R * r, rad(s > 0 ? 38 : -142), rad(s > 0 ? 142 : -38)); ctx.stroke(); }
+      },
+    };
+  }
+  if (name === 'loom') {
+    const x = W * .41, span = cr * 2;
+    return { ...column, mode: 'tick',
+      neuron: (c, j) => [x, cy + (c ? -1 : 1) * (cr * .07 + (strand[j] + .5) / 512 * span)],
+      mat: [[x, cy + cr * .07 + span], [x, cy - cr * .07 - span]],
+      lab: { black: [x, top], white: [x, 2 * cy - top + 8 * U], layers: column.layers } };
+  }
+  if (name === 'grid') {
+    const s = cr * 2.3 / 32, x = W * .41, gap = cr * .38;
+    return { ...column, mode: 'cell', cell: s,
+      neuron: (c, j) => [x + (cellOf[j][0] - 15.5) * s, cy + (c ? -1 : 1) * (gap + (cellOf[j][1] + .5) * s)],
+      mat: [[x + 16 * s, cy + gap + 8 * s], [x + 16 * s, cy - gap - 8 * s]],
+      lab: { black: [x, cy - gap - 16 * s - 30 * U], white: [x, cy + gap + 16 * s + 24 * U], layers: column.layers } };
+  }
+  const cl = [[W * .4, cy + cr * 1.22], [W * .4, cy - cr * 1.22]];
+  return { ...column, mode: 'dust',
+    neuron: (c, j) => [cl[c][0] + shape[j][0] * cr, cl[c][1] + shape[j][1] * cr * (c ? -1 : 1)],
+    mat: [[cl[0][0] + cr * .5, cl[0][1] + cr * .9], [cl[1][0] + cr * .5, cl[1][1] - cr * .9]],
+    lab: { black: [cl[1][0], top], white: [cl[0][0], 2 * cy - top + 8 * U], layers: column.layers } };
+}
+
+function applyStyle(name, animate) {
+  style = name; lastChange = performance.now();
+  for (const b of document.querySelectorAll('[data-style]')) { b.classList.toggle('on', b.dataset.style === name); b.setAttribute('aria-pressed', b.dataset.style === name); }
+  if (!G || !shape) return;
+  const s = G.s = styleSpec(name);
+  for (let c = 0; c < 2; c++) for (let j = 0; j < 512; j++) [pxT[c * 512 + j], pyT[c * 512 + j]] = s.neuron(c, j);
+  for (let i = 0; i < 64; i++) [nxT[i], nyT[i]] = s.node(i >> 5, i & 31);
+  G.fanFrom = s.fanFrom;
+  if (animate && !CALM) { ghost = { list: fibres, t0: performance.now() }; fibres = []; pulses = []; morphEnd = performance.now() + MORPH; }
+  else settle();
+}
+function settle() { // everything has arrived: fibres can be drawn again
+  morphEnd = 0;
+  px.set(pxT); py.set(pyT); nx.set(nxT); ny.set(nyT);
+  [G.out.x, G.out.y] = G.s.out;
+  if (view) { buildFibres(); stageT0 = performance.now(); stageK = .3; }
+  if (tour >= 0) placeCard();
+}
+
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  U = clamp(Math.min(W / 1440, H / 810), .85, 1.5);   // text and spacing follow the window
+  document.documentElement.style.setProperty('--u', U);
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cy = H * .5, bs = Math.min(W * .245, H * .5), cr = Math.min(W * .08, H * .165);
+  G = { cy, cr, b: { x: W * .035, y: cy - bs / 2, s: bs, c: bs / 8 }, out: { x: W * .665, y: cy }, fx1: W * .73, fx2: W * .965, top: cy - cr * 2.5 };
+  G.step = (G.fx2 - G.fx1) / 22;
+  BG = ctx.createRadialGradient(W * .45, cy, 0, W * .45, cy, Math.max(W, H) * .7);
+  BG.addColorStop(0, '#0f0f12'); BG.addColorStop(1, '#070709');
+  const headTop = Math.max(16, G.top - 80 * U);
+  $('head').style.cssText = `left:${G.b.x}px;top:${headTop}px`;
+  $('styles').style.top = headTop + 'px';
+  $('ctl').style.cssText = `left:${G.b.x}px;top:${G.b.y + bs + 34 * U}px;width:${bs}px`;
+  applyStyle(style, false);
+}
+
+// ---------- the network as fibres ----------
+// key names what a fibre connects, so the same connection can be found again in the next reading.
+// a0 is the brightness it starts from; grow draws it out from its source instead of fading it in.
+function fib(x0, y0, x1, y1, c, a, stage, ka, kb, bow, key = stage + ka + '>' + kb) {
+  const [c1x, c1y, c2x, c2y] = G.s.curve(x0, y0, x1, y1, bow);
+  return { x0, y0, x1, y1, c1x, c1y, c2x, c2y, c, a, stage, ka, kb, key, a0: 0, grow: true };
+}
+function buildFibres() {
+  fibres = [];
+  if (morphEnd) return;                             // neurons are still in flight
+  const t = view.trace, out = G.out;
+  for (const p of t.pieces) {                       // 1. each piece → the neurons it moves most
+    const [x, y] = sqXY(p.sq), c = p.pc & 8 ? EMBER : IVORY;
+    for (const [i, d] of p.drive) {
+      const f = fib(x, y, px[i], py[i], c, (d > 0 ? .06 : .025) + .17 * Math.min(1, Math.abs(d) / 110), 0, 's' + p.sq, 'n' + i);
+      f.ink = ctx.createLinearGradient(x, y, px[i], py[i]);  // emerge from the board instead of streaking across it
+      f.ink.addColorStop(0, `rgba(${c},.12)`); f.ink.addColorStop(.3, `rgb(${c})`);
+      fibres.push(f);
+    }
+  }
+  const m0 = Math.max(1, ...t.e0.map(e => Math.abs(e[2])));
+  for (const [i, k, c] of t.e0)                     // 2. firing neurons → first hidden layer
+    fibres.push(fib(px[i], py[i], nx[k], ny[k], i < 512 ? IVORY : EMBER, .025 + .3 * Math.pow(Math.abs(c) / m0, 1.2), 1, 'n' + i, 'h' + k));
+  const m1 = Math.max(1, ...t.e1.map(e => Math.abs(e[2])));
+  for (const [i, k, c] of t.e1)                     // 3. first → second hidden layer
+    fibres.push(fib(nx[i % 32], ny[i % 32], nx[32 + k], ny[32 + k], IVORY, .04 + .4 * Math.pow(Math.abs(c) / m1, 1.2), 2, 'h' + i % 32, 'g' + k, 0, '2a' + i + '>g' + k)); // two activations per neuron
+  const sum = new Array(64).fill(0);                // 4. everything → the single output (two activations per neuron)
+  t.e2.forEach((c, i) => sum[(i >> 6) * 32 + i % 32] += c);
+  const m2 = Math.max(1, ...sum.map(Math.abs));
+  sum.forEach((c, n) => {
+    if (Math.abs(c) < m2 * .04) return;
+    const first = n < 32, a = .06 + .6 * Math.abs(c) / m2, col = c > 0 ? IVORY : EMBER;
+    fibres.push(first ? fib(nx[n], ny[n], out.x, out.y, col, a * .7, 3, 'h' + n, 'out', (ny[n] < G.cy ? -1 : 1) * G.cr * 1.1)
+                      : fib(nx[n], ny[n], out.x, out.y, col, a, 3, 'g' + (n - 32), 'out'));
+  });
+  if (t.material)                                   // material takes a shortcut around the layers
+    G.s.mat.forEach(([x, y], c) => fibres.push(fib(x, y, out.x, out.y, t.material > 0 ? IVORY : EMBER,
+      .12 + .5 * Math.min(1, Math.abs(t.material) / 500), 3, 'mat' + c, 'out', (c ? -1 : 1) * G.cr * 1.5)));
+}
+function bez(f, t) {
+  const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+  return [a * f.x0 + b * f.c1x + c * f.c2x + d * f.x1, a * f.y0 + b * f.c1y + c * f.c2y + d * f.y1];
+}
+function strokeFibre(f, p) { // p < 1 draws only the first part, so a fibre grows from its source
+  ctx.beginPath(); ctx.moveTo(f.x0, f.y0);
+  if (p >= 1) ctx.bezierCurveTo(f.c1x, f.c1y, f.c2x, f.c2y, f.x1, f.y1);
+  else {
+    const ax = lerp(f.x0, f.c1x, p), ay = lerp(f.y0, f.c1y, p), bx = lerp(f.c1x, f.c2x, p), by = lerp(f.c1y, f.c2y, p);
+    const cx = lerp(f.c2x, f.x1, p), cy = lerp(f.c2y, f.y1, p), dx = lerp(ax, bx, p), dy = lerp(ay, by, p), ex = lerp(bx, cx, p), ey = lerp(by, cy, p);
+    ctx.bezierCurveTo(ax, ay, dx, dy, lerp(dx, ex, p), lerp(dy, ey, p));
+  }
+  ctx.stroke();
+}
+const reveal = (stage, now) => clamp((now - stageT0 - DELAY[stage] * stageK) / (DRAW * stageK), 0, 1);
+const smooth = p => p * p * (3 - 2 * p);
+const shown = (f, now) => lerp(f.a0, f.a, smooth(reveal(f.stage, now)));   // a fibre's brightness right now
+
+// A new reading of the network (a move, or a hovered future). Connections in both readings change
+// brightness in place; the rest fade in or out. The change still travels layer by layer, board to
+// output, but nothing is wiped. Only the first reading and the tour's replay grow fibres from nothing.
+function setView(v, quick, grow) {
+  const now = lastChange = performance.now(), was = new Map();
+  if (!grow) for (const f of fibres) { const a = shown(f, now); if (a > .003) was.set(f.key, [f, a]); }
+  prevView = view; viewT0 = now;
+  view = v;
+  const t = v.trace;
+  for (let i = 0; i < 1024; i++) tgt[i] = Math.sqrt(t.x[i] / 127);
+  for (let i = 0; i < 64; i++) { hTgt[i] = t.h0[i] / 127; hTgt[64 + i] = t.h1[i] / 127; }
+  stageT0 = now; stageK = quick || CALM ? .3 : 1;
+  buildFibres();
+  if (!was.size) return;
+  for (const f of fibres) { const w = was.get(f.key); f.grow = false; f.a0 = w ? w[1] : 0; was.delete(f.key); }
+  for (const [f, a] of was.values()) fibres.push(Object.assign(f, { grow: false, a0: a, a: 0 })); // gone: fade out
+}
+const rootView = () => ({ board: pos.board, stm: pos.stm, trace: pos.trace, ahead: 0 });
+
+// ---------- guided tour: one part of the picture at a time, the rest dimmed ----------
+function tourRegions() { // [x, y, w, h] boxes left undimmed for the current step
+  const p = 18 * U, b = G.b, lb = G.s.lab;
+  const box = (xs, ys) => { const x0 = Math.min(...xs) - p, y0 = Math.min(...ys) - p; return [x0, y0, Math.max(...xs) + p - x0, Math.max(...ys) + p - y0]; };
+  if (tour === 0) return [box([b.x - 16 * U, b.x + b.s], [G.top - 12 * U, b.y + b.s + 18 * U])];
+  if (tour === 1) return [box([...px, lb.black[0], lb.white[0]], [...py, lb.black[1] - 12 * U, lb.white[1] + 18 * U])];
+  if (tour === 2) return [box([...nx], [...ny, ...(lb.layers || []).map(l => l[1] - 12 * U)])];
+  if (tour === 3) return [[G.out.x - 70 * U, G.cy - 82 * U, 140 * U, 112 * U]];
+  const fx = Math.max(G.fanFrom, G.out.x + 45 * U), cell = 124 * U, sx = G.fx2 - Math.max(1, Math.floor((G.fx2 - W * .29) / cell)) * cell;
+  return [[fx, G.top - 24 * U, W - 8 - fx, H - 72 * U - G.top], [sx, H - 84 * U, W - 8 - sx, 70 * U]]; // the lines, and the depth strip
+}
+function placeCard() { // beside the lit part, on whichever side has room
+  const r = tourRegions()[0], el = $('guide'), w = el.offsetWidth, h = el.offsetHeight, gap = 24 * U;
+  let x = r[0] + r[2] + gap;
+  if (x + w > W - 16) x = r[0] - w - gap;
+  el.style.left = clamp(x, 16, W - w - 16) + 'px';
+  el.style.top = clamp(r[1], 16, H - h - 16) + 'px';
+}
+function replay() { act.fill(0); hAct.fill(0); outCp = 0; setView(view, false, true); stageK = CALM ? .3 : 2.2; } // the forward pass again, slowly
+function showTour(n) {
+  tour = n; lastChange = performance.now();
+  document.body.classList.toggle('touring', n >= 0);
+  $('guide').hidden = n < 0; $('bGuide').setAttribute('aria-expanded', n >= 0); $('bGuide').classList.toggle('on', n >= 0);
+  if (n < 0) { store('lens-toured', 1); if (tourResume) post('/auto', { on: true }); tourResume = false; return; }
+  if (auto && !tourResume) { tourResume = true; post('/auto', { on: false }); } // hold the position still while it is explained
+  $('guide').querySelectorAll('li').forEach((li, i) => li.classList.toggle('on', i === n));
+  $('gStep').textContent = `0${n + 1} / 05`;
+  $('gBack').hidden = !n; $('guide').querySelector('.foot').hidden = !!n;
+  $('gNext').firstChild.textContent = n === 4 ? 'done' : 'next';
+  if (n >= 1 && n <= 3 && view) replay();   // watch the signal reach the part being explained
+  if (G && G.s) placeCard();
+}
+
+// ---------- drawing ----------
+function label(s, x, y, o = {}) {
+  ctx.font = `${o.weight || 400} ${(o.size || 10.5) * U}px ${o.font || MONO}`;
+  ctx.letterSpacing = (o.track ?? 1) * U + 'px';
+  ctx.textAlign = o.align || 'left'; ctx.textBaseline = o.base || 'alphabetic';
+  ctx.fillStyle = `rgba(${o.c || IVORY},${o.a ?? .45})`;
+  ctx.fillText(s, x, y);
+}
+
+function drawBoard(now) {
+  const { x, y, c } = G.b, bd = view.board, root = !view.ahead;
+  for (let s = 0; s < 64; s++) {
+    const [sx, sy] = sqXY(s), lit = ((s & 7) + (s >> 3)) & 1;
+    const moved = root && pos.last && (s === sqOf(pos.last) || s === sqOf(pos.last.slice(2)));
+    ctx.fillStyle = `rgba(${IVORY},${(lit ? .05 : .014) + (moved ? .05 : 0)})`;
+    ctx.fillRect(sx - c / 2, sy - c / 2, c, c);
+  }
+  for (let i = 0; i < 8; i++) {
+    label('abcdefgh'[i], x + (i + .5) * c, y + 8 * c + 14 * U, { align: 'center', a: .5, size: 9, track: 0 });
+    label(8 - i, x - 9 * U, y + (i + .5) * c + 3 * U, { align: 'right', a: .5, size: 9, track: 0 });
+  }
+  // what the network is told beyond "piece on square": who attacks whom, and which pawns stand together
+  ctx.lineWidth = .7;
+  const link = (a, b, col, alpha) => {
+    const [x0, y0] = sqXY(a), [x1, y1] = sqXY(b), d = Math.hypot(x1 - x0, y1 - y0), ux = (x1 - x0) / d * c * .34, uy = (y1 - y0) / d * c * .34;
+    ctx.strokeStyle = `rgba(${col},${alpha})`; ctx.beginPath(); ctx.moveTo(x0 + ux, y0 + uy); ctx.lineTo(x1 - ux, y1 - uy); ctx.stroke();
+  };
+  const onPiece = hover.key && hover.key[0] === 's';
+  const links = (v, s) => {
+    for (const [a, b] of v.trace.pairs) link(a, b, IVORY, .05 * s);
+    for (const [a, b] of v.trace.threats)
+      link(a, b, v.board[a] & 8 ? EMBER : IVORY, (hover.key === 's' + a || hover.key === 's' + b ? .7 : onPiece ? .06 : .17) * s);
+  };
+  const lf = prevView ? smooth(clamp((now - viewT0) / (300 * stageK), 0, 1)) : 1; // the old facts fade as the new ones arrive
+  if (lf < 1) links(prevView, 1 - lf);
+  links(view, lf);
+  if (root && pos.check) {                          // the king in check
+    const [kx, ky] = sqXY(bd.indexOf(6 | pos.stm << 3));
+    ctx.strokeStyle = `rgba(${pos.stm ? EMBER : IVORY},.8)`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(kx, ky, c * .46, 0, 7); ctx.stroke();
+  }
+  // the move this board is about: the engine's current choice, or the last step into a previewed future
+  const mv = view.ahead ? view.moves && view.moves.at(-1) : !pos.over && L[1] && L[1].d.pv[0];
+  if (mv) {
+    const [x0, y0] = sqXY(sqOf(mv)), [x1, y1] = sqXY(sqOf(mv.slice(2))), d = Math.hypot(x1 - x0, y1 - y0), ux = (x1 - x0) / d, uy = (y1 - y0) / d;
+    const hl = c * .3, tx = x1 - ux * hl, ty = y1 - uy * hl, side = (pos.stm + Math.max(0, view.ahead - 1)) & 1;
+    ctx.strokeStyle = ctx.fillStyle = `rgba(${side ? EMBER : IVORY},.5)`; ctx.lineWidth = c * .09; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(tx - uy * hl * .6, ty + ux * hl * .6); ctx.lineTo(tx + uy * hl * .6, ty - ux * hl * .6); ctx.fill();
+    ctx.lineCap = 'butt';
+  }
+  ctx.font = `${c * .72}px ${SYMBOLS}`; ctx.letterSpacing = '0px'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let s = 0; s < 64; s++) {
+    if (!bd[s]) continue;
+    let [sx, sy] = sqXY(s);
+    if (root && slide && slide.to === s) {
+      const p = clamp((now - slide.t0) / 260, 0, 1), e = 1 - Math.pow(1 - p, 3), [fx, fy] = sqXY(slide.from);
+      sx = lerp(fx, sx, e); sy = lerp(fy, sy, e);
+    }
+    ctx.fillStyle = `rgba(${bd[s] & 8 ? EMBER : IVORY},${onPiece && hover.key !== 's' + s ? .55 : .96})`;
+    ctx.fillText(GLYPH[bd[s] & 7] + '︎', sx, sy + c * .04);
+  }
+  if (root && sel >= 0) {
+    const [sx, sy] = sqXY(sel);
+    ctx.strokeStyle = `rgba(${IVORY},.6)`; ctx.lineWidth = 1; ctx.strokeRect(sx - c / 2 + .5, sy - c / 2 + .5, c - 1, c - 1);
+    ctx.fillStyle = `rgba(${IVORY},.55)`;
+    for (const m of pos.legal) if (sqOf(m) === sel) { const [tx, ty] = sqXY(sqOf(m.slice(2))); ctx.beginPath(); ctx.arc(tx, ty, c * .09, 0, 7); ctx.fill(); }
+  }
+}
+
+function drawNetwork(now, t, dt, thinking) {
+  ctx.globalCompositeOperation = 'lighter';
+  // the network's sense of what each piece is worth right now, as light under it
+  for (const p of view.trace.pieces) {
+    const [x, y] = sqXY(p.sq), w = p.worth === null ? .45 : Math.min(1, Math.abs(p.worth) / 900);
+    glow(x, y, G.b.c * (.5 + .55 * w), p.pc & 8 ? EMBER : IVORY, .05 + .2 * w);
+  }
+  if (G.s.deco && !morphEnd) G.s.deco();
+  ctx.lineWidth = .8;
+  const focus = hover.key;
+  if (ghost) {
+    const g = 1 - (now - ghost.t0) / 280;
+    if (g <= 0) ghost = null;
+    else for (const f of ghost.list) { ctx.strokeStyle = f.ink || `rgb(${f.c})`; ctx.globalAlpha = f.a * g; strokeFibre(f, 1); }
+  }
+  for (const f of fibres) {
+    const p = reveal(f.stage, now), a = f.grow ? f.a : shown(f, now);
+    if ((f.grow && p <= 0) || a < .003) continue;
+    const m = !focus ? 1 : f.ka === focus || f.kb === focus ? 2.6 : .2;
+    ctx.strokeStyle = f.ink || `rgb(${f.c})`; ctx.globalAlpha = Math.min(1, a * m);
+    strokeFibre(f, f.grow ? smooth(p) : 1);
+  }
+  // signals travelling along the fibres while the engine is working
+  if (thinking && !CALM && fibres.length && pulses.length < 240)
+    for (let n = 0; n < 3; n++) {
+      const f = fibres[Math.floor(Math.random() * fibres.length)];
+      if (Math.random() < f.a * 1.6 && reveal(f.stage, now) >= 1) pulses.push({ f, t: 0, v: .7 + Math.random() * .7 });
+    }
+  pulses = pulses.filter(p => (p.t += p.v * dt) < 1);
+  for (const p of pulses) { const [x, y] = bez(p.f, p.t); glow(x, y, 3.2, p.f.c, .75 * Math.sin(p.t * 3.1416)); }
+
+  // the 1,024 pair-neurons, drawn the way the current style asks; one path per brightness level
+  const mode = G.s.mode, k = G.cr / 120, fade = mode === 'dust' ? [.13, .11] : mode === 'tick' ? [.12, .17] : [.06, .18];
+  for (let c = 0; c < 2; c++) {
+    const col = c ? EMBER : IVORY, levels = [0, 1, 2, 3, 4, 5].map(() => new Path2D());
+    for (let j = 0; j < 512; j++) {
+      const i = c * 512 + j, a = act[i], x = px[i], y = py[i], path = levels[clamp(Math.floor(a * 6), 0, 5)];
+      if (mode === 'dust') {
+        for (let q = i * D, e = q + (a > .03 ? D : 2); q < e; q++) { // silent neurons get a sparse haze: cheaper, and firing reads clearer
+          const ang = dAng[q] + t * dSpd[q], r = dRad[q] * k * (.75 + a * 1.2);
+          path.rect(x + Math.cos(ang) * r, y + Math.sin(ang) * r, 1.15, 1.15);
+        }
+        if (a > .03) glow(x, y, (2.5 + a * 7) * Math.max(.8, k), col, Math.min(1, .2 + a * .8));
+      } else if (mode === 'tick') { const len = 3 * U + a * G.cr * .62; path.rect(x - len / 2, y - .5, len, 1); }
+      else { const s = G.s.cell * .78; path.rect(x - s / 2, y - s / 2, s, s); }
+      if (focus === 'n' + i) glow(x, y, 12 * U, col, .9);
+    }
+    ctx.fillStyle = `rgb(${col})`;
+    levels.forEach((path, lv) => { ctx.globalAlpha = Math.min(1, fade[0] + lv * fade[1]); ctx.fill(path); });
+  }
+  for (let i = 0; i < 64; i++) {
+    const x = nx[i], y = ny[i], on = Math.max(hAct[(i >> 5) * 64 + (i & 31)], hAct[(i >> 5) * 64 + 32 + (i & 31)]);
+    ctx.globalAlpha = .3; ctx.fillStyle = `rgb(${IVORY})`; ctx.fillRect(x - .8, y - .8, 1.6, 1.6);
+    if (on > .01) glow(x, y, 3 + 9 * on, IVORY, .25 + .75 * on);
+    if (focus === (i < 32 ? 'h' : 'g') + (i & 31)) glow(x, y, 14 * U, IVORY, .8);
+  }
+  const mag = Math.min(1, Math.abs(outCp) / 500), oc = outCp < 0 ? EMBER : IVORY, breath = thinking && !CALM ? 1 + .06 * Math.sin(t * 5) : 1;
+  glow(G.out.x, G.out.y, (16 + 22 * mag) * breath, oc, .5 + .4 * mag);
+  glow(G.out.x, G.out.y, 6, IVORY, 1);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+}
+
+function drawFan(now, dt) {
+  const ks = Object.keys(L).map(Number).sort((a, b) => scoreOf(L[b].d) - scoreOf(L[a].d)); // up = better for white
+  const gaps = ks.slice(1).map((k, i) => clamp((scoreOf(L[ks[i]].d) - scoreOf(L[k].d)) * .6, 40, 84) * U); // 40: room for a label between lines
+  let y = G.cy - gaps.reduce((a, b) => a + b, 0) / 2;
+  const ease = 1 - Math.exp(-dt * 7), x0 = G.out.x, xs = Math.max(G.fanFrom, x0), mid = lerp(xs, G.fx1, .5);
+  const hotK = pin ? pin.k : hover.line, hotPly = pin ? pin.ply : hover.ply;
+  const stroke = (l, a, w) => {
+    const xe = Math.min(G.fx2, G.fx1 + Math.max(0, l.len - 1) * G.step);
+    ctx.strokeStyle = `rgba(${IVORY},${a})`; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(x0, G.cy); ctx.lineTo(xs, G.cy); ctx.bezierCurveTo(mid, G.cy, mid, l.y, G.fx1, l.y); ctx.lineTo(xe, l.y); ctx.stroke();
+    return xe;
+  };
+  const fade = 1 - (now - prevT0) / 400;            // last position's lines that no new line has taken over yet
+  for (const k in prevL) fade > 0 ? stroke(prevL[k], .24 * fade, .9) : delete prevL[k];
+  ks.forEach((k, i) => {
+    const l = L[k], d = l.d, hot = hotK === k, dimmed = hotK !== null && !hot;
+    l.y += (y - l.y) * ease; l.len += (d.pv.length - l.len) * ease;
+    y += gaps[i] || 0;
+    const xe = stroke(l, k === 1 ? .9 : hot ? .7 : dimmed ? .1 : .24, k === 1 ? 1.3 : .9);
+    for (let p = 0; p < l.len && G.fx1 + p * G.step <= G.fx2 + 1; p++) {
+      const x = G.fx1 + p * G.step, black = (pos.stm + p) & 1, picked = hot && hotPly === p;
+      ctx.fillStyle = `rgba(${black ? EMBER : IVORY},${k === 1 || hot ? 1 : dimmed ? .25 : .6})`;
+      ctx.beginPath(); ctx.arc(x, l.y, picked ? 4 * U : p ? 1.7 : 2.6, 0, 7); ctx.fill();
+      if (picked && pin) { ctx.strokeStyle = `rgba(${IVORY},.8)`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, l.y, 8 * U, 0, 7); ctx.stroke(); }
+      if (hot && d.san[p]) label(d.san[p], x, l.y + (black ? 17 : -9) * U, { align: 'center', size: 10, track: 0, c: black ? EMBER : IVORY, a: p <= hotPly ? 1 : .5 });
+    }
+    if (!hot) label(d.san[0], G.fx1 + 7 * U, l.y - 7 * U, { size: 11.5, track: .3, a: k === 1 ? 1 : dimmed ? .15 : .6 });
+    label(scoreText(d), xe + 10 * U, l.y + 3.5 * U, { track: 0, a: k === 1 ? .9 : dimmed ? .15 : .55 });
+  });
+  if (!CALM) { // a spark runs down a line every time the engine revises it
+    ctx.globalCompositeOperation = 'lighter';
+    fanPulses = fanPulses.filter(p => L[p.k] && (p.u += dt * 1.6) < 1);
+    for (const p of fanPulses) {
+      const l = L[p.k], xe = Math.min(G.fx2, G.fx1 + Math.max(0, l.len - 1) * G.step), x = lerp(x0, xe, p.u);
+      const s = clamp((x - xs) / (G.fx1 - xs), 0, 1), yy = lerp(G.cy, l.y, s * s * (3 - 2 * s));
+      glow(x, yy, p.k === 1 ? 5 : 3.5, IVORY, (p.k === 1 ? .9 : .5) * Math.sin(p.u * 3.1416));
+    }
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  }
+}
+
+function drawText() {
+  const t = view.trace, b = G.b, best = L[1] && L[1].d, lb = G.s.lab, row = 15 * U, toMove = view.stm ?? pos.stm;
+  // headings
+  label(view.ahead ? `${view.ahead} ${view.ahead > 1 ? 'MOVES' : 'MOVE'} AHEAD${pin ? ' · PINNED' : ''}` : 'THE POSITION', b.x, G.top, { a: view.ahead ? 1 : .6 });
+  label(`${t.nFeatures} of 86,896 inputs lit`, b.x, G.top + row, { a: .55, track: .3 });
+  label(`move ${((pos.ply + view.ahead) >> 1) + 1} · ${toMove ? 'black' : 'white'} to play`, b.x, G.top + 2 * row, { a: .55, track: .3 });
+  if (!morphEnd) {
+    const firing = from => { let n = 0; for (let i = from; i < from + 512; i++) if (t.x[i]) n++; return n; };
+    label("BLACK'S POINT OF VIEW", lb.black[0], lb.black[1], { align: 'center', a: .6 });
+    label(`${firing(512)} of 512 neurons firing`, lb.black[0], lb.black[1] + row, { align: 'center', a: .55, track: .3 });
+    label("WHITE'S POINT OF VIEW", lb.white[0], lb.white[1], { align: 'center', a: .6 });
+    label(`${firing(0)} of 512 neurons firing`, lb.white[0], lb.white[1] + row, { align: 'center', a: .55, track: .3 });
+    if (lb.layers) {
+      for (const [x, y] of lb.layers) label('32', x, y, { align: 'center', a: .6 });
+      label('LAYERS', (lb.layers[0][0] + lb.layers[1][0]) / 2, lb.layers[0][1] + row, { align: 'center', a: .55 });
+    }
+  }
+  // the network's verdict from one look
+  label('INSTINCT', G.out.x, G.cy - 62 * U, { align: 'center', a: .6 });
+  label(pawns(outCp), G.out.x, G.cy - 34 * U, { align: 'center', font: SERIF, size: 25, track: 0, a: .95, c: outCp < 0 ? EMBER : IVORY });
+  // the decision
+  label('CALCULATION', G.fx1, G.top, { a: .6 });
+  if (pos.over) label(pos.over === 'checkmate' ? `Checkmate. ${pos.stm ? 'White' : 'Black'} wins.` : pos.over === 'stalemate' ? 'Stalemate.' : 'Drawn.', G.fx1, G.top + 52 * U, { font: SERIF, size: 34, track: 0, a: 1 });
+  else if (best) {
+    label(best.san[0], G.fx1, G.top + 56 * U, { font: SERIF, size: 50, track: 0, a: 1 });
+    const wide = ctx.measureText(best.san[0]).width;
+    label(scoreText(best), G.fx1 + wide + 14 * U, G.top + 56 * U, { font: SERIF, size: 25, track: 0, a: .6, c: scoreOf(best) < 0 ? EMBER : IVORY });
+    label(`depth ${best.depth}  ·  ${big(best.nodes)} positions  ·  ${big(best.nps)} a second`, G.fx1, G.top + 78 * U, { a: .55, track: .3 });
+    if (best.wdl) { // win / draw / loss odds as one thin bar
+      let x = G.fx1;
+      [[IVORY, .85], [IVORY, .22], [EMBER, .85]].forEach(([c, a], i) => { const w = wdlWidth() * best.wdl[i] / 1000; ctx.fillStyle = `rgba(${c},${a})`; ctx.fillRect(x, G.top + 90 * U, Math.max(0, w - 1), 2 * U); x += w; });
+    }
+  } else label('…', G.fx1, G.top + 56 * U, { font: SERIF, size: 50, a: .4 });
+  // every finished iteration of the search, newest on the right
+  const cell = 124 * U, n = Math.max(1, Math.floor((G.fx2 - W * .29) / cell)), shown = depths.slice(-n), sx = G.fx2 - n * cell + 16 * U;
+  if (shown.length) {
+    label('SEARCH DEPTH', sx, H - 66 * U, { a: .6 });
+    label('each pass looks one step further ahead · underlined where it changed its mind', sx + ctx.measureText('SEARCH DEPTH').width + 16 * U, H - 66 * U, { a: .5, track: .3 });
+  }
+  shown.forEach((d, i) => {
+    const x = G.fx2 - (shown.length - i) * cell + 16 * U, fresh = i === shown.length - 1, a = fresh ? .95 : .2 + .35 * i / shown.length;
+    label(String(d.depth).padStart(3, '0'), x, H - 44 * U, { a: a * .7, track: .5 });
+    label(d.san, x + 32 * U, H - 44 * U, { a: d.changed ? 1 : a, track: .3 });
+    if (d.changed) ctx.fillRect(x + 32 * U, H - 40 * U, ctx.measureText(d.san).width, 1); // ember means Black everywhere, so a change is underlined instead
+    label(d.s, x, H - 29 * U, { a: a * .85, track: 0 }); label(big(d.nodes), x + 48 * U, H - 29 * U, { a: a * .6, track: 0 });
+  });
+  if (tip) {
+    ctx.font = `400 ${10.5 * U}px ${MONO}`; ctx.letterSpacing = .3 * U + 'px';
+    const w = ctx.measureText(tip).width + 20 * U, x = clamp(hover.x + 16, 8, W - w - 8), y = clamp(hover.y - 32 * U, 8, H - 32 * U);
+    ctx.fillStyle = 'rgba(8,8,10,.92)'; ctx.fillRect(x, y, w, 24 * U);
+    label(tip, x + 10 * U, y + 16 * U, { a: .9, track: .3 });
+  }
+}
+const wdlWidth = () => Math.min(220 * U, G.fx2 - G.fx1);
+
+function frame(now) {
+  requestAnimationFrame(frame);   // first, so one bad frame cannot stop the picture
+  const dt = clamp((now - last) / 1000, 0, .05);
+  last = now;
+  const ready = G && G.s && view && pos, thinking = now - lastInfo < 1200;
+  // ponytail: nothing has moved for 3 s (every animation is shorter), so the last frame stays up; any input or engine output wakes it
+  if (ready && now - Math.max(lastInfo, lastChange) > 3000) return;
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  if (!ready) return;
+  spin += ((thinking ? 1 : 0) - spin) * (1 - Math.exp(-dt * 3)); clock += dt * spin; // the dust drifts only while the engine works
+  const since = now - stageT0, k = 1 - Math.exp(-dt * 9);
+  if (morphEnd) {                 // a style change: every neuron flies to its new place
+    if (now >= morphEnd) settle();
+    else {
+      for (let i = 0; i < 1024; i++) { px[i] += (pxT[i] - px[i]) * k; py[i] += (pyT[i] - py[i]) * k; }
+      for (let i = 0; i < 64; i++) { nx[i] += (nxT[i] - nx[i]) * k; ny[i] += (nyT[i] - ny[i]) * k; }
+      G.out.x += (G.s.out[0] - G.out.x) * k; G.out.y += (G.s.out[1] - G.out.y) * k;
+    }
+  }
+  if (since > 220 * stageK) for (let i = 0; i < 1024; i++) act[i] += (tgt[i] - act[i]) * k;       // each layer lights up
+  if (since > (DELAY[1] + 200) * stageK) for (let i = 0; i < 64; i++) hAct[i] += (hTgt[i] - hAct[i]) * k; // as its inputs arrive
+  if (since > (DELAY[2] + 200) * stageK) for (let i = 64; i < 128; i++) hAct[i] += (hTgt[i] - hAct[i]) * k;
+  if (since > (DELAY[3] + 200) * stageK) outCp += (view.trace.cp - outCp) * k;
+  drawBoard(now); drawNetwork(now, clock, dt, thinking); drawFan(now, dt); drawText();
+  if (tour >= 0) {
+    ctx.fillStyle = 'rgba(7,7,9,.8)'; ctx.beginPath(); ctx.rect(0, 0, W, H);
+    for (const [x, y, w, h] of tourRegions()) ctx.rect(x, y, w, h);
+    ctx.fill('evenodd');
+  }
+}
+
+// ---------- pointer ----------
+function squareAt(x, y) {
+  const b = G.b;
+  return x >= b.x && x < b.x + b.s && y >= b.y && y < b.y + b.s ? (7 - Math.floor((y - b.y) / b.c)) * 8 + Math.floor((x - b.x) / b.c) : -1;
+}
+function pick() {
+  const { x: mx, y: my } = hover;
+  hover.key = hover.line = null; tip = '';
+  if (!G || !G.s || !view) return;
+  for (const k in L) {
+    const l = L[k], n = l.d.pv.length, xe = Math.min(G.fx2, G.fx1 + (n - 1) * G.step);
+    if (Math.abs(my - l.y) < 11 * U && mx > G.fx1 - G.step / 2 && mx < xe + G.step / 2) { hover.line = +k; hover.ply = clamp(Math.round((mx - G.fx1) / G.step), 0, n - 1); return; }
+  }
+  const t = view.trace, s = squareAt(mx, my), best = L[1] && L[1].d;
+  if (s >= 0) {
+    const p = t.pieces.find(p => p.sq === s);
+    if (!p) return;
+    hover.key = 's' + s;
+    const who = `${p.pc & 8 ? 'black' : 'white'} ${NAME[p.pc & 7]} on ${sqName(s)}`;
+    tip = p.worth === null ? `${who} — every input is read relative to where the kings stand`
+      : `${who} — take it away and the network's verdict moves ${(Math.abs(p.worth) / 100).toFixed(1)} pawns`;
+    return;
+  }
+  if (best && best.wdl && mx >= G.fx1 && mx <= G.fx1 + wdlWidth() && Math.abs(my - G.top - 91 * U) < 8 * U) {
+    tip = `white wins ${Math.round(best.wdl[0] / 10)}% · draw ${Math.round(best.wdl[1] / 10)}% · black wins ${Math.round(best.wdl[2] / 10)}%`; return;
+  }
+  if (Math.hypot(mx - G.out.x, my - G.out.y) < 16) { hover.key = 'out'; tip = `one look, no search: material ${pawns(t.material)}, position ${pawns(t.positional)}`; return; }
+  for (let i = 0; i < 64; i++)
+    if ((nx[i] - mx) ** 2 + (ny[i] - my) ** 2 < 64) { hover.key = (i < 32 ? 'h' : 'g') + (i & 31); tip = `${i < 32 ? 'first' : 'second'} layer, neuron ${(i & 31) + 1} of 32`; return; }
+  let bi = -1, bd = 100;
+  for (let i = 0; i < 1024; i++) { const d = (px[i] - mx) ** 2 + (py[i] - my) ** 2; if (d < bd) { bd = d; bi = i; } }
+  if (bi >= 0) { hover.key = 'n' + bi; tip = `neuron ${bi % 512 + 1} in ${bi < 512 ? 'white' : 'black'}'s view — ${t.x[bi] ? 'firing at ' + Math.round(t.x[bi] / 1.27) + '%' : 'silent'}`; }
+}
+
+// One calm line under the controls that says what the thing under the pointer does.
+function refreshHint() {
+  const h = pin ? `Pinned ${pin.moves.length} ${pin.moves.length > 1 ? 'moves' : 'move'} ahead. Hover its pieces and neurons to inspect this future. Esc returns to now.`
+    : hover.line !== null ? 'Click to pin this future, so you can move the pointer and inspect it.'
+    : hover.key && hover.key[0] === 's' && !view.ahead ? 'Click a piece, then a square, to play a move yourself.'
+    : 'Hover anything to inspect it. Hover a line of play to see the future it leads to. Press ? for a guided tour.';
+  if ($('hint').textContent !== h) $('hint').textContent = h;
+  $('bBack').hidden = !pin;
+}
+
+// A hovered or pinned ply of a line shows that future position, and the network reading it.
+function syncPreview() {
+  refreshHint();
+  const looking = pin || hover.line !== null;
+  if (!looking) { clearTimeout(pauseTimer); pauseTimer = 0; }
+  else if (auto && !pauseTimer) // resting on a line pauses the self-play, so the future does not vanish under the pointer
+    pauseTimer = setTimeout(() => { pauseTimer = 0; if (auto && (pin || hover.line !== null)) post('/auto', { on: false }); }, 350);
+  const l = hover.line !== null && L[hover.line], moves = pin ? pin.moves : l ? l.d.pv.slice(0, hover.ply + 1) : [], want = moves.join(',');
+  if (want === previewKey) return;
+  previewKey = want;
+  clearTimeout(previewTimer);
+  if (!want) return setView(rootView(), true);
+  const key = pos.id + ':' + want, show = v => previewKey === want && setView({ ...v, ahead: moves.length, moves }, true);
+  if (cache.has(key)) return show(cache.get(key));
+  previewTimer = setTimeout(async () => {
+    const r = await fetch('/trace?moves=' + want).catch(() => null);
+    if (!r || !r.ok) return;
+    const v = await r.json();
+    cache.set(key, v); show(v);
+  }, 50);
+}
+function unpin() { if (pin) { pin = null; pick(); syncPreview(); } }
+
+cv.addEventListener('mousemove', e => { lastChange = performance.now(); hover.x = e.clientX; hover.y = e.clientY; pick(); syncPreview(); cv.style.cursor = hover.line !== null || (hover.key && hover.key[0] === 's' && !view.ahead) ? 'pointer' : 'default'; });
+cv.addEventListener('mouseleave', () => { lastChange = performance.now(); hover.x = hover.y = -9; pick(); syncPreview(); });
+cv.addEventListener('click', e => {
+  if (!pos || !view) return;
+  lastChange = performance.now();
+  hover.x = e.clientX; hover.y = e.clientY; pick();   // a tap arrives with no mousemove before it
+  if (hover.line !== null) {                          // pin this ply, or release it if it is the pinned one
+    const again = pin && pin.k === hover.line && pin.ply === hover.ply;
+    pin = again ? null : { k: hover.line, ply: hover.ply, moves: L[hover.line].d.pv.slice(0, hover.ply + 1) };
+    sel = -1;
+    return syncPreview();
+  }
+  const s = view.ahead ? -1 : squareAt(e.clientX, e.clientY);
+  if (s < 0) { sel = -1; return; }
+  if (sel >= 0) {
+    const m = sqName(sel) + sqName(s), go = pos.legal.find(x => x === m) || pos.legal.find(x => x === m + 'q');
+    if (go) { sel = -1; return post('/move', { uci: go }); }
+  }
+  sel = pos.legal.some(m => sqOf(m) === s) ? s : -1;
+});
+
+// ---------- controls ----------
+const say = m => { $('msg').textContent = m; };
+async function post(path, body = {}) {
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    say(j.error ? j.error[0].toUpperCase() + j.error.slice(1) + '.' : '');
+    return !j.error;
+  } catch { say('The engine is not answering. Run “npm start” in the project folder.'); return false; }
+}
+function setMode(m) {
+  auto = m.auto;
+  if (m.pace) pace = m.pace;
+  $('bAuto').firstElementChild.textContent = auto ? '❚❚ pause' : '▶ watch it play';
+  $('bPace').textContent = `pace ${pace / 1000}s`;
+}
+function pickStyle(name) { if (name !== style && !morphEnd) { store('lens-style', name); applyStyle(name, true); } }
+
+$('bAuto').onclick = () => { unpin(); tourResume = false; post('/auto', { on: !auto }); };
+$('bStep').onclick = () => post('/step');
+$('bUndo').onclick = () => post('/undo');
+$('bNew').onclick = () => post('/new');
+$('bBack').onclick = unpin;
+$('bPace').onclick = () => post('/pace', { ms: PACES[(PACES.indexOf(pace) + 1) % PACES.length] });
+$('bFen').onclick = () => { const f = $('fen'); f.hidden = !f.hidden; if (!f.hidden) f.focus(); };
+$('fen').onkeydown = async e => {
+  if (e.key === 'Escape') e.target.hidden = true;
+  if (e.key === 'Enter' && e.target.value.trim() && await post('/new', { fen: e.target.value })) { e.target.value = ''; e.target.hidden = true; }
+};
+$('bGuide').onclick = () => showTour(tour < 0 ? 0 : -1);
+$('gBack').onclick = () => showTour(Math.max(0, tour - 1));
+$('gNext').onclick = () => showTour(tour < 4 ? tour + 1 : -1);
+$('gClose').onclick = () => showTour(-1);
+for (const b of document.querySelectorAll('[data-style]')) b.onclick = () => pickStyle(b.dataset.style);
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (tour >= 0 && e.code === 'ArrowRight') $('gNext').click(); // while the tour is open the arrows step through it
+  else if (tour >= 0 && e.code === 'ArrowLeft') $('gBack').click();
+  else if (e.key === 'Escape') { if (tour >= 0) showTour(-1); unpin(); }
+  else if (e.key === '?') $('bGuide').click();
+  else if (e.key >= '1' && e.key <= '4') pickStyle(STYLES[e.key - 1]);
+  else if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); $('bAuto').click(); } // a focused button keeps its own space
+  else if (e.code === 'ArrowRight') $('bStep').click();
+  else if (e.code === 'ArrowLeft') $('bUndo').click();
+});
+// A button clicked with the mouse gives focus back, so space goes on meaning pause; keyboard users keep their focus.
+addEventListener('click', e => { const b = e.detail && e.target.closest('button'); if (b) b.blur(); });
+
+// ---------- engine feed ----------
+const es = new EventSource('/events');
+es.addEventListener('init', e => {
+  const d = JSON.parse(e.data);
+  makeShape(d.layout); resize();
+  $('net').textContent = `Stockfish 19 · ${d.net} · 86,896 → 1,024 → 32 → 32 → 1`;
+});
+es.addEventListener('pos', e => {
+  pos = JSON.parse(e.data);
+  prevL = L; prevT0 = performance.now();            // the new search's lines take over these, so the fan glides instead of collapsing
+  L = {}; depths = []; fanPulses = []; sel = -1; pin = null; previewKey = ''; hover.line = null; cache.clear();
+  slide = pos.last ? { from: sqOf(pos.last), to: sqOf(pos.last.slice(2)), t0: performance.now() } : null;
+  setMode(pos);
+  setView(rootView());
+  refreshHint();
+  if (firstRun) { firstRun = false; showTour(0); } // first visit: start with the tour
+});
+es.addEventListener('info', e => {
+  const d = JSON.parse(e.data);
+  if (!pos || !G || d.id !== pos.id) return;
+  lastInfo = performance.now();
+  for (const k in L) if (+k !== d.multipv && L[k].d.pv[0] === d.pv[0]) delete L[k]; // the move moved rank: its old line is stale
+  if (!L[d.multipv]) { const o = prevL[d.multipv]; delete prevL[d.multipv]; L[d.multipv] = o ? { y: o.y, len: o.len } : { y: G.cy, len: 0 }; }
+  L[d.multipv].d = d;
+  fanPulses.push({ k: d.multipv, u: 0 });
+  if (d.multipv === 1) {
+    if (depths.length && depths.at(-1).depth === d.depth) depths.pop();
+    const prev = depths.at(-1);
+    depths.push({ depth: d.depth, san: d.san[0], s: scoreText(d), nodes: d.nodes, changed: !!prev && prev.san !== d.san[0] });
+  }
+  if (pin) { // the engine may reorder or rewrite its lines; keep the pinned future, and mark its line if one still starts that way
+    const want = pin.moves.join(','), k = Object.keys(L).find(k => L[k].d.pv.slice(0, pin.moves.length).join(',') === want);
+    pin.k = k === undefined ? null : +k;
+  } else if (hover.line !== null) { pick(); syncPreview(); }
+});
+es.addEventListener('mode', e => setMode(JSON.parse(e.data)));
+es.onerror = () => say('Lost the engine. Run “npm start” in the project folder.');
+es.onopen = () => say('');
+
+addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => lastChange = performance.now()); // anything that arrived while hidden gets drawn
+setMode({ auto: true });
+refreshHint();
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

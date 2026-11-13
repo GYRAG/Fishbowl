@@ -1,0 +1,5 @@
+# the Stockfish release (103 MB exe, 98 MB net) is too big for GitHub; see README
+engine/
+# upstream Stockfish clone, not used by the app
+Stockfish/
+node_modules/
